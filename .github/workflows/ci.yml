@@ -1,8 +1,8 @@
-on: 
+on:
   schedule:
-      - cron: '0 0 * * 1'
+    - cron: '0 0 * * 1'
   push:
-    branches: 
+    branches:
       - master
   pull_request:
 
@@ -44,65 +44,124 @@ jobs:
           command: fmt
           args: --all -- --check
 
-  #build:
-  #  name: Build
-  #  runs-on: ${{ matrix.os }}
-  #  strategy:
-  #    matrix:
-  #      os: [ubuntu-latest]
-  #      rust: [stable]
-  #  steps:
-  #    - uses: actions/checkout@v2
-  #    - uses: actions-rs/toolchain@v1
-  #      with:
-  #        profile: minimal
-  #        toolchain: ${{ matrix.rust }}
-  #        override: true
-  #    - uses: Swatinem/rust-cache@v2
-  #    - run: sudo apt-get update -y && sudo apt-get install -y libssl-dev pkg-config
-  #    - uses: Jimver/cuda-toolkit@v0.2.14
-  #      id: cuda-toolkit
-  #      with:
-  #        cuda: '12.2.2'
-  #    # - run: echo "Installed cuda version is: ${{steps.cuda-toolkit.outputs.cuda}}"
-  #    # - run: echo "Cuda install location: ${{steps.cuda-toolkit.outputs.CUDA_PATH}}"
-  #    - run: CUDA_COMPUTE_CAP=86 cargo build --features cuda,cudnn,flash-attn,nccl
-  
-  #clippy:
-  #  name: Clippy
-  #  runs-on: ${{ matrix.os }}
-  #  strategy:
-  #    matrix:
-  #      os: [ubuntu-latest, windows-latest, macOS-latest]
-  #      rust: [stable]
-  #  steps:
-  #    - uses: actions/checkout@v2
-  #    - uses: actions-rs/toolchain@v1
-  #      with:
-  #        profile: minimal
-  #        toolchain: ${{ matrix.rust }}
-  #        override: true
-  #    - run: rustup component add clippy
-  #    - uses: actions-rs/cargo@v1
-  #      with:
-  #        command: clippy
-  #        args: --workspace --tests --examples -- -D warnings
-  
-  #docs:
-  #  name: Docs
-  #  runs-on: ubuntu-latest
-  #  steps:
-  #    - uses: actions/checkout@v2
-  #    - uses: actions-rs/toolchain@v1
-  #      with:
-  #        profile: minimal
-  #        toolchain: stable
-  #        override: true
-  #    - uses: actions-rs/cargo@v1
-  #      with:
-  #        command: doc
-  #        args: --workspace
-  
+  build:
+    name: Build ${{ matrix.build.name }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+        rust: [stable]
+        include:
+          - os: ubuntu-latest
+            container: ""
+            build:
+              name: cuda
+              features: cuda,cudnn,flash-attn,nccl
+              deps: sudo apt-get update -y && sudo apt-get install -y libssl-dev pkg-config
+          - os: ubuntu-latest
+            container: ""
+            build:
+              name: plain-apt
+              features: ""
+              deps: sudo apt-get update -y && sudo apt-get install -y libssl-dev pkg-config
+          - os: ubuntu-latest
+            container: ""
+            build:
+              name: tpu
+              features: tpu
+              deps: sudo apt-get update -y && sudo apt-get install -y libssl-dev pkg-config
+          - os: ubuntu-latest
+            container: ""
+            build:
+              name: mkl
+              features: mkl
+              deps: sudo apt-get update -y && sudo apt-get install -y libssl-dev pkg-config
+          - os: ubuntu-latest
+            container: fedora:latest
+            build:
+              name: plain-dnf
+              features: ""
+              deps: sudo dnf install -y openssl-devel pkg-config gcc
+          - os: ubuntu-latest
+            container: ""
+            build:
+              name: arm64
+              features: ""
+              deps: sudo apt-get update -y && sudo apt-get install -y libssl-dev pkg-config gcc-aarch64-linux-gnu
+              target: aarch64-unknown-linux-gnu
+          - os: windows-latest
+            container: ""
+            build:
+              name: plain
+              features: ""
+              deps: ""
+          - os: macOS-latest
+            container: ""
+            build:
+              name: metal
+              features: metal
+              deps: ""
+          - os: macOS-latest
+            container: ""
+            build:
+              name: accelerate
+              features: accelerate
+              deps: ""
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+          target: ${{ matrix.build.target }}
+      - uses: Swatinem/rust-cache@v2
+      - if: ${{ matrix.build.deps != '' }}
+        run: ${{ matrix.build.deps }}
+      - if: ${{ matrix.build.name == 'cuda' }}
+        uses: Jimver/cuda-toolkit@v0.2.14
+        id: cuda-toolkit
+        with:
+          cuda: '12.2.2'
+      - run: cargo build --features ${{ matrix.build.features }} ${{ matrix.build.target && format('--target {0}', matrix.build.target) || '' }}
+      - if: ${{ !matrix.build.target }} # Only run tests on native builds
+        run: cargo test --features ${{ matrix.build.features }}
+
+  test-metal:
+    name: Test metal on macOS
+    runs-on: macOS-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --features metal
+
+  clippy:
+    name: Clippy
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+        rust: [stable]
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+      - run: rustup component add clippy
+      - uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --workspace --tests --examples -- -D warnings
+
   typos:
     name: Typos
     runs-on: ubuntu-latest
