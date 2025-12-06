@@ -5,6 +5,7 @@ use std::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
+#[cfg(any(feature = "cuda", feature = "metal"))]
 use crate::backend::{copy_blocks, swap_blocks};
 
 #[derive(Clone, Debug)]
@@ -196,6 +197,7 @@ impl CacheEngine {
     }
 }
 
+#[cfg(any(feature = "cuda", feature = "metal"))]
 impl CacheEngine {
     pub fn swap_in(&self, src_to_dst: HashMap<usize, usize>) -> Result<()> {
         for i in 0..self.num_layers {

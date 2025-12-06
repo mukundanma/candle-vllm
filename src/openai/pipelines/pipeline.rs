@@ -200,7 +200,7 @@ impl DefaultLoader {
                         //no token provided
                         let token_path = format!(
                             "{}/.cache/huggingface/token",
-                            dirs::home_dir().unwrap().display()
+                            home::home_dir().unwrap().display()
                         );
                         if !Path::new(&token_path).exists() {
                             //also no token cache

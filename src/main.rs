@@ -13,7 +13,9 @@ use candle_vllm::openai::sampling_params::GenerationConfig;
 use candle_vllm::openai::OpenAIServerData;
 use candle_vllm::scheduler::cache_engine::{CacheConfig, CacheEngine};
 use candle_vllm::scheduler::SchedulerConfig;
-use clap::Parser;
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 use tracing::{info, warn};
 const SIZE_IN_MB: usize = 1024 * 1024;
@@ -22,9 +24,13 @@ use rustchatui::start_ui_server;
 use serde_json::json;
 use tokio::sync::Notify;
 use tower_http::cors::{Any, CorsLayer};
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     /// Huggingface token environment variable (optional). If not specified, load using hf_token_path.
     #[arg(long)]
     hf_token: Option<String>,
@@ -129,6 +135,52 @@ struct Args {
 
     #[arg(long, default_value_t = false)]
     ui_server: bool, //start candle-vllm with built-in web server
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Launch a chat session.
+    Chat {
+        #[arg(long)]
+        system_prompt: Option<String>,
+        #[arg(long)]
+        stream: bool,
+        #[arg(long)]
+        live: bool,
+        #[arg(long)]
+        max_tokens: Option<i32>,
+        #[arg(long)]
+        frequency: Option<i32>,
+        #[arg(long)]
+        port: Option<i32>,
+        #[arg(long)]
+        temperature: Option<f32>,
+        #[arg(long)]
+        top_p: Option<f32>,
+        #[arg(long)]
+        top_k: Option<i32>,
+        #[arg(long)]
+        min_p: Option<f32>,
+        #[arg(long)]
+        frequency_penalty: Option<f32>,
+        #[arg(long)]
+        presence_penalty: Option<f32>,
+        #[arg(long)]
+        repeat_last_n: Option<i32>,
+        #[arg(long)]
+        thinking: Option<bool>,
+        #[arg(long)]
+        context_cache: Option<bool>,
+    },
+    /// Benchmark the server.
+    Benchmark {
+        #[arg(long)]
+        batch: Option<i32>,
+        #[arg(long)]
+        max_tokens: Option<i32>,
+        #[arg(long)]
+        port: Option<i32>,
+    },
 }
 
 fn get_cache_config(
@@ -249,6 +301,109 @@ fn get_dtype(dtype: Option<String>) -> DType {
 #[allow(unused_mut)]
 async fn main() -> Result<()> {
     let args = Args::parse();
+
+    if let Some(command) = args.command {
+        let python_executable = if Command::new("python3").output().is_ok() {
+            "python3"
+        } else {
+            "python"
+        };
+        let mut exe_path = std::env::current_exe().expect("Failed to find executable path");
+        exe_path.pop();
+        let script_path = exe_path.join("examples");
+
+        match command {
+            Commands::Chat {
+                system_prompt,
+                stream,
+                live,
+                max_tokens,
+                frequency,
+                port,
+                temperature,
+                top_p,
+                top_k,
+                min_p,
+                frequency_penalty,
+                presence_penalty,
+                repeat_last_n,
+                thinking,
+                context_cache,
+            } => {
+                let mut cmd = Command::new(python_executable);
+                cmd.arg(script_path.join("chat.py"));
+                if let Some(prompt) = system_prompt {
+                    cmd.arg("--system_prompt").arg(prompt);
+                }
+                if stream {
+                    cmd.arg("--stream");
+                }
+                if live {
+                    cmd.arg("--live");
+                }
+                if let Some(mt) = max_tokens {
+                    cmd.arg("--max_tokens").arg(mt.to_string());
+                }
+                if let Some(f) = frequency {
+                    cmd.arg("--frequency").arg(f.to_string());
+                }
+                if let Some(p) = port {
+                    cmd.arg("--port").arg(p.to_string());
+                }
+                if let Some(t) = temperature {
+                    cmd.arg("--temperature").arg(t.to_string());
+                }
+                if let Some(tp) = top_p {
+                    cmd.arg("--top_p").arg(tp.to_string());
+                }
+                if let Some(tk) = top_k {
+                    cmd.arg("--top_k").arg(tk.to_string());
+                }
+                if let Some(mp) = min_p {
+                    cmd.arg("--min_p").arg(mp.to_string());
+                }
+                if let Some(fp) = frequency_penalty {
+                    cmd.arg("--frequency_penalty").arg(fp.to_string());
+                }
+                if let Some(pp) = presence_penalty {
+                    cmd.arg("--presence_penalty").arg(pp.to_string());
+                }
+                if let Some(rln) = repeat_last_n {
+                    cmd.arg("--repeat_last_n").arg(rln.to_string());
+                }
+                if let Some(t) = thinking {
+                    cmd.arg("--thinking").arg(t.to_string());
+                }
+                if let Some(cc) = context_cache {
+                    cmd.arg("--context_cache").arg(cc.to_string());
+                }
+                let mut child = cmd.spawn().expect("failed to execute process");
+                child.wait().expect("failed to wait on child");
+                return Ok(());
+            }
+            Commands::Benchmark {
+                batch,
+                max_tokens,
+                port,
+            } => {
+                let mut cmd = Command::new(python_executable);
+                cmd.arg(script_path.join("benchmark.py"));
+                if let Some(b) = batch {
+                    cmd.arg("--batch").arg(b.to_string());
+                }
+                if let Some(mt) = max_tokens {
+                    cmd.arg("--max_tokens").arg(mt.to_string());
+                }
+                if let Some(p) = port {
+                    cmd.arg("--port").arg(p.to_string());
+                }
+                let mut child = cmd.spawn().expect("failed to execute process");
+                child.wait().expect("failed to wait on child");
+                return Ok(());
+            }
+        }
+    }
+
     if !args.log {
         tracing_subscriber::fmt()
             .with_max_level(tracing::Level::INFO)
