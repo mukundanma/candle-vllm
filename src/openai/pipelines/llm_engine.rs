@@ -851,15 +851,18 @@ impl LLMEngine {
         scheduler_output: &SchedulerOutput,
         rank: usize,
     ) -> Result<()> {
-        let cache_engine = Box::new(&mut self.get_mut_pipeline(rank).unwrap().1);
-        if !scheduler_output.blocks_to_swap_in.is_empty() {
-            cache_engine.swap_in(scheduler_output.blocks_to_swap_in.clone())?;
-        }
-        if !scheduler_output.blocks_to_swap_out.is_empty() {
-            cache_engine.swap_out(scheduler_output.blocks_to_swap_out.clone())?;
-        }
-        if !scheduler_output.blocks_to_copy.is_empty() {
-            cache_engine.copy(scheduler_output.blocks_to_copy.clone())?;
+        #[cfg(any(feature = "cuda", feature = "metal"))]
+        {
+            let cache_engine = Box::new(&mut self.get_mut_pipeline(rank).unwrap().1);
+            if !scheduler_output.blocks_to_swap_in.is_empty() {
+                cache_engine.swap_in(scheduler_output.blocks_to_swap_in.clone())?;
+            }
+            if !scheduler_output.blocks_to_swap_out.is_empty() {
+                cache_engine.swap_out(scheduler_output.blocks_to_swap_out.clone())?;
+            }
+            if !scheduler_output.blocks_to_copy.is_empty() {
+                cache_engine.copy(scheduler_output.blocks_to_copy.clone())?;
+            }
         }
         Ok(())
     }

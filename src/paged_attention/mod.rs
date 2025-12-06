@@ -7,8 +7,6 @@ mod attn_bias;
 pub(crate) mod input_metadata;
 pub(crate) mod utils;
 
-const _PARTITION_SIZE: usize = 512;
-
 #[allow(dead_code)]
 pub struct PagedAttention {
     num_attention_heads: usize,
@@ -136,10 +134,6 @@ impl PagedAttention {
 
         #[cfg(not(feature = "flash-attn"))]
         let att = if input_metadata.is_prompt {
-            //chunked attention for each sequence
-            let chunk_size = 1024;
-            let mut attn_chunks = vec![];
-
             let key_seq = if key_value_heads != attention_heads {
                 repeat_kv(key, attention_heads / key_value_heads)?
             } else {
@@ -152,36 +146,20 @@ impl PagedAttention {
                 value.clone()
             };
 
-            let num_chunks = seq_len.div_ceil(chunk_size);
+            let mut att = (query.matmul(&key_seq.t()?)? * f64::from(self.scale))?;
 
-            for c in 0..num_chunks {
-                let offset = c * chunk_size;
-                let len = chunk_size.min(seq_len - offset);
-                //chunk at query is correct for the following
-                let q_chunk = query.narrow(2, offset, len)?.contiguous()?;
-                let mut att = (q_chunk.matmul(&key_seq.t()?)? * f64::from(self.scale))?;
-
-                if let Some(sc) = softcapping {
-                    att = ((att / sc)?.tanh()? * sc)?;
-                }
-
-                if let Some(mask) = &attention_mask {
-                    //mask needs to be chunked
-                    let q_chunk_mask = mask.narrow(2, offset, len)?; // shape: [1, 1, chunk_len, K_len]
-                    att = att.broadcast_add(&q_chunk_mask)?;
-                }
-
-                att = candle_nn::ops::softmax_last_dim(&att.to_dtype(candle_core::DType::F32)?)?
-                    .to_dtype(att.dtype())?;
-
-                let att_chunk = att.matmul(&value_seq)?;
-                attn_chunks.push(att_chunk);
+            if let Some(sc) = softcapping {
+                att = ((att / sc)?.tanh()? * sc)?;
             }
-            Some(
-                Tensor::cat(&attn_chunks, 2)?
-                    .contiguous()?
-                    .transpose(1, 2)?,
-            )
+
+            if let Some(mask) = &attention_mask {
+                att = att.broadcast_add(mask)?;
+            }
+
+            let att = candle_nn::ops::softmax_last_dim(&att.to_dtype(candle_core::DType::F32)?)?
+                .to_dtype(att.dtype())?;
+
+            Some(att.matmul(&value_seq)?.transpose(1, 2)?)
         } else {
             None
         };
