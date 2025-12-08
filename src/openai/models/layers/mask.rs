@@ -14,8 +14,8 @@ pub fn get_attention_causal_mask(
 }
 
 #[allow(unreachable_code)]
-#[cfg(not(feature = "flash-attn"))]
-fn get_casual_mask_internal(
+#[cfg(all(not(feature = "flash-attn"), feature = "cuda"))]
+fn get_causal_mask_internal(
     device: &Device,
     dtype: DType,
     tgt_len: usize,
@@ -25,6 +25,26 @@ fn get_casual_mask_internal(
     let mask = Tensor::zeros((tgt_len, tgt_len), dtype, device)?;
     let _ = causal_mask(&mask, sliding_window)?;
     mask.unsqueeze(0)?.unsqueeze(0)
+}
+
+#[cfg(all(not(feature = "flash-attn"), not(feature = "cuda")))]
+fn get_causal_mask_internal(
+    device: &Device,
+    dtype: DType,
+    tgt_len: usize,
+    sliding_window: Option<usize>,
+) -> candle_core::Result<Tensor> {
+    let mut mask = Vec::with_capacity(tgt_len);
+    for i in 0..tgt_len {
+        let mut row = vec![f32::NEG_INFINITY; tgt_len];
+        for j in 0..=i {
+            if sliding_window.is_none() || i - j <= sliding_window.unwrap() {
+                row[j] = 0.0;
+            }
+        }
+        mask.push(row);
+    }
+    Tensor::from_vec(mask.concat(), (tgt_len, tgt_len), device)?.to_dtype(dtype)?.unsqueeze(0)?.unsqueeze(0)
 }
 
 #[cfg(not(feature = "flash-attn"))]
@@ -46,7 +66,7 @@ pub fn get_attention_causal_mask(
     for (_, seq_offset) in seqlens.iter().enumerate() {
         let seq_len = seq_offset - start;
         let mask =
-            get_casual_mask_internal(device, dtype, seq_len as usize, sliding_window).unwrap();
+            get_causal_mask_internal(device, dtype, seq_len as usize, sliding_window).unwrap();
         vec_mask.push(mask);
         start = *seq_offset;
     }
